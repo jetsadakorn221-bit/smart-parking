@@ -95,7 +95,7 @@
     <div class="logo" aria-hidden="true">🅿️ 🚘</div>
     <h1>Smart Parking</h1>
     <p>ระบบตรวจสอบช่องจอดรถอัจฉริยะ 8 ช่อง</p>
-    <div class="tag">โหมดทดลอง • ยังไม่เชื่อมต่อ ESP32</div>
+    <div class="tag">Firebase Realtime Database • ยังไม่เชื่อมต่อ ESP32</div>
   </header>
 
   <main>
@@ -126,32 +126,55 @@
 
     <section class="panel">
       <h2 class="section-title">📡 สถานะระบบ</h2>
-      <div class="connection"><span class="dot"></span><span>กำลังทำงานในโหมดทดลองบนอุปกรณ์นี้</span></div>
+      <div class="connection"><span class="dot" id="connectionDot"></span><span id="connectionText">กำลังเชื่อมต่อ Firebase...</span></div>
       <p style="font-size:13px;line-height:1.7;color:#62758a;margin-bottom:0">
-        ข้อมูลในหน้านี้เป็นข้อมูลจำลอง การกดเปลี่ยนสถานะยังไม่ได้อ่านค่าจากเซนเซอร์ IR จริง
+        การกดเปลี่ยนสถานะจะบันทึกลง Firebase และแสดงบนอุปกรณ์อื่นแบบเรียลไทม์ แต่ยังไม่ได้อ่านค่าจากเซนเซอร์ IR จริง
       </p>
     </section>
 
     <div class="notice">
       <strong>หมายเหตุ:</strong> เว็บไซต์นี้ใช้ทดสอบหน้าตาและการทำงานเบื้องต้นเท่านั้น
-      ยังไม่ได้เชื่อมต่อ ESP32 หรือฐานข้อมูลออนไลน์
+      เชื่อมต่อฐานข้อมูล Firebase สำหรับทดสอบแล้ว แต่ยังไม่ได้เชื่อมต่อ ESP32
     </div>
   </main>
 
   <footer>Smart Parking 8 ช่อง • HTML + CSS + JavaScript</footer>
 
+  <!-- Firebase compat SDK: ใช้ได้โดยตรงกับเว็บ HTML บน GitHub Pages -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
   <script>
     // false = ว่าง, true = ไม่ว่าง
     const initialState = [false, false, false, true, false, true, false, true];
     let parking = [...initialState];
+    let databaseReady = false;
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBfw6i0yCecVf5TGpPErGudewOM-3BsUfU",
+      authDomain: "smartparking8.firebaseapp.com",
+      databaseURL: "https://smartparking8-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "smartparking8",
+      storageBucket: "smartparking8.firebasestorage.app",
+      messagingSenderId: "445351670247",
+      appId: "1:445351670247:web:30c43b561755580bf74d42",
+      measurementId: "G-HT05QX2JX3"
+    };
 
     const grid = document.getElementById("parkingGrid");
     const freeCount = document.getElementById("freeCount");
     const fullCount = document.getElementById("fullCount");
+    const connectionText = document.getElementById("connectionText");
+    const connectionDot = document.getElementById("connectionDot");
+    let slotsRef = null;
+
+    function setConnection(message, color) {
+      connectionText.textContent = message;
+      connectionDot.style.background = color;
+    }
 
     function render() {
       grid.innerHTML = "";
-
       parking.forEach((isFull, index) => {
         const button = document.createElement("button");
         button.type = "button";
@@ -163,34 +186,92 @@
           <span class="status">${isFull ? "🔴 ไม่ว่าง" : "🟢 ว่าง"}</span>
           <span class="hint">แตะเพื่อเปลี่ยน</span>
         `;
-        button.addEventListener("click", () => {
-          parking[index] = !parking[index];
-          render();
+        button.addEventListener("click", async () => {
+          if (!databaseReady || !slotsRef) {
+            alert("ยังเชื่อมต่อ Firebase ไม่สำเร็จ กรุณาตรวจสอบ Authentication และ Database Rules");
+            return;
+          }
+          try {
+            await slotsRef.child(String(index + 1)).set(!parking[index]);
+          } catch (error) {
+            console.error(error);
+            setConnection("บันทึกไม่ได้: ตรวจสอบ Firebase Rules", "#c51f32");
+            alert("บันทึกสถานะไม่ได้ กรุณาตรวจสอบ Firebase Authentication และ Rules");
+          }
         });
         grid.appendChild(button);
       });
-
       const occupied = parking.filter(Boolean).length;
       freeCount.textContent = parking.length - occupied;
       fullCount.textContent = occupied;
     }
 
+    async function saveAll(values) {
+      if (!databaseReady || !slotsRef) {
+        alert("Firebase ยังไม่พร้อมใช้งาน");
+        return;
+      }
+      const payload = {};
+      values.forEach((value, index) => payload[String(index + 1)] = Boolean(value));
+      try {
+        await slotsRef.set(payload);
+      } catch (error) {
+        console.error(error);
+        setConnection("บันทึกไม่ได้: ตรวจสอบ Firebase Rules", "#c51f32");
+        alert("บันทึกสถานะไม่ได้ กรุณาตรวจสอบ Firebase Authentication และ Rules");
+      }
+    }
+
     document.getElementById("randomBtn").addEventListener("click", () => {
-      parking = parking.map(() => Math.random() < 0.5);
-      render();
+      saveAll(parking.map(() => Math.random() < 0.5));
     });
+    document.getElementById("allFreeBtn").addEventListener("click", () => saveAll(Array(8).fill(false)));
+    document.getElementById("resetBtn").addEventListener("click", () => saveAll([...initialState]));
 
-    document.getElementById("allFreeBtn").addEventListener("click", () => {
-      parking = Array(8).fill(false);
-      render();
-    });
+    async function startFirebase() {
+      try {
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const database = firebase.database();
+        slotsRef = database.ref("parking/slots");
+        setConnection("กำลังลงชื่อเข้าใช้ Firebase...", "#e5a000");
+        await auth.signInAnonymously();
 
-    document.getElementById("resetBtn").addEventListener("click", () => {
-      parking = [...initialState];
-      render();
-    });
+        database.ref(".info/connected").on("value", snapshot => {
+          setConnection(snapshot.val() === true
+            ? "เชื่อมต่อ Firebase แล้ว • ซิงก์เรียลไทม์"
+            : "กำลังเชื่อมต่อ Firebase...", snapshot.val() === true ? "#168044" : "#e5a000");
+        });
+
+        slotsRef.on("value", async snapshot => {
+          const data = snapshot.val();
+          if (data === null) {
+            const initialData = {};
+            initialState.forEach((value, index) => initialData[String(index + 1)] = value);
+            try { await slotsRef.set(initialData); }
+            catch (error) {
+              console.error(error);
+              setConnection("อ่าน/เขียนไม่ได้: ตรวจสอบ Database Rules", "#c51f32");
+            }
+            return;
+          }
+          parking = Array.from({ length: 8 }, (_, index) => Boolean(data[String(index + 1)]));
+          databaseReady = true;
+          render();
+        }, error => {
+          console.error(error);
+          databaseReady = false;
+          setConnection("เข้า Firebase ไม่ได้: ตรวจสอบ Rules", "#c51f32");
+        });
+      } catch (error) {
+        console.error(error);
+        databaseReady = false;
+        setConnection("เชื่อมต่อไม่สำเร็จ: เปิด Anonymous Authentication", "#c51f32");
+      }
+    }
 
     render();
+    startFirebase();
   </script>
 </body>
-  </html>
+</html>
